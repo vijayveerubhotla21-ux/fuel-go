@@ -2,23 +2,21 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Navigation,
   Crosshair,
-  AlertTriangle,
-  Compass,
   MapPin,
-  ExternalLink,
   Car,
-  Clock,
   Layers,
   ChevronUp,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Radio,
-  Wifi,
   Activity,
-  Maximize2,
   CheckCircle2,
   RefreshCw,
+  Fuel,
+  Maximize2,
+  Clock,
+  Zap,
+  LocateFixed,
 } from 'lucide-react';
 import * as maplibregl from 'maplibre-gl';
 
@@ -36,9 +34,11 @@ interface MapTilerMapProps {
   showMicroNudge?: boolean;
   initialStyle?: MapTailorStyle;
   autoDetectLocation?: boolean;
+  autoFitBounds?: boolean;
+  deliveryEtaMinutes?: number;
 }
 
-// Distance calculation using Haversine formula
+// Distance calculation using Haversine formula (km)
 export function calculateHaversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371; // Earth radius in km
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -50,7 +50,55 @@ export function calculateHaversineKm(lat1: number, lon1: number, lat2: number, l
       Math.sin(dLon / 2) *
       Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return Math.round(R * c * 10) / 10;
+  return Number((R * c).toFixed(2));
+}
+
+// Helper to construct free public tile styles that work without external API keys
+function getMapStyleConfig(style: MapTailorStyle, mapTilerKey?: string): maplibregl.StyleSpecification | string {
+  if (mapTilerKey && mapTilerKey.length > 5 && mapTilerKey !== 'get_your_key_at_maptiler_com') {
+    switch (style) {
+      case 'tactical-dark':
+        return `https://api.maptiler.com/maps/dataviz-dark/style.json?key=${mapTilerKey}`;
+      case 'fleet-amber':
+        return `https://api.maptiler.com/maps/outdoor-v2/style.json?key=${mapTilerKey}`;
+      case 'satellite-hybrid':
+        return `https://api.maptiler.com/maps/hybrid/style.json?key=${mapTilerKey}`;
+      case 'clean-slate':
+      default:
+        return `https://api.maptiler.com/maps/streets-v2/style.json?key=${mapTilerKey}`;
+    }
+  }
+
+  // Robust public raster basemaps requiring no API key
+  let tileUrl = 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png';
+  if (style === 'clean-slate') {
+    tileUrl = 'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png';
+  } else if (style === 'fleet-amber') {
+    tileUrl = 'https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png';
+  } else if (style === 'satellite-hybrid') {
+    tileUrl = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+  }
+
+  return {
+    version: 8,
+    sources: {
+      'base-tiles': {
+        type: 'raster',
+        tiles: [tileUrl],
+        tileSize: 256,
+        attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+      },
+    },
+    layers: [
+      {
+        id: 'base-tiles-layer',
+        type: 'raster',
+        source: 'base-tiles',
+        minzoom: 0,
+        maxzoom: 19,
+      },
+    ],
+  };
 }
 
 export const MapTilerMap: React.FC<MapTilerMapProps> = ({
@@ -65,6 +113,8 @@ export const MapTilerMap: React.FC<MapTilerMapProps> = ({
   showMicroNudge = true,
   initialStyle = 'tactical-dark',
   autoDetectLocation = true,
+  autoFitBounds = true,
+  deliveryEtaMinutes,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<maplibregl.Map | null>(null);
@@ -76,14 +126,10 @@ export const MapTilerMap: React.FC<MapTilerMapProps> = ({
   const [showStyleMenu, setShowStyleMenu] = useState<boolean>(false);
   const [showTelemetryHud, setShowTelemetryHud] = useState<boolean>(false);
 
-  // Default coordinate fallback if geolocation is not yet permitted
-  const initialLat = customerLocation?.lat || 12.926;
-  const initialLng = customerLocation?.lng || 77.6762;
-
-  // Exact Customer / Delivery Target Coordinates
+  // Customer Target Coordinates: prefer customerLocation prop or initial default
   const [targetCoords, setTargetCoords] = useState<{ lat: number; lng: number }>({
-    lat: initialLat,
-    lng: initialLng,
+    lat: customerLocation?.lat || 12.926,
+    lng: customerLocation?.lng || 77.6762,
   });
 
   // GPS & Accuracy State
@@ -93,25 +139,13 @@ export const MapTilerMap: React.FC<MapTilerMapProps> = ({
   const [accuracyRadius, setAccuracyRadius] = useState<number | null>(null);
   const [satelliteLock, setSatelliteLock] = useState<boolean>(false);
   const [bowserLatency, setBowserLatency] = useState<number>(24);
-  const [hasAcquiredInitialGps, setHasAcquiredInitialGps] = useState<boolean>(false);
 
-  // Rider animated coordinates
+  // Animated Driver coordinates
   const [animatedDriverCoords, setAnimatedDriverCoords] = useState<{ lat: number; lng: number }>(driverLocation);
   const [reverseGeocoding, setReverseGeocoding] = useState<boolean>(false);
   const [usingFallbackMap, setUsingFallbackMap] = useState<boolean>(false);
 
-  // Sync prop updates if parent explicitly updates customerLocation
-  useEffect(() => {
-    if (customerLocation && customerLocation.lat && customerLocation.lng) {
-      setTargetCoords({ lat: customerLocation.lat, lng: customerLocation.lng });
-    }
-  }, [customerLocation?.lat, customerLocation?.lng]);
-
-  // MapTiler API Key from env
-  const mapTilerKey = (import.meta.env.VITE_MAPTILER_API_KEY as string) || '';
-  const isKeyConfigured = mapTilerKey && mapTilerKey !== 'get_your_key_at_maptiler_com' && mapTilerKey.length > 5;
-
-  // Reverse Geocode helper
+  // Reverse geocoding helper
   const performReverseGeocode = useCallback(
     async (lat: number, lng: number) => {
       setReverseGeocoding(true);
@@ -145,9 +179,9 @@ export const MapTilerMap: React.FC<MapTilerMapProps> = ({
     [onLocationSelect]
   );
 
-  // LIVE DEVICE GPS ACQUISITION
+  // ACTIVE LIVE CUSTOMER DEVICE GPS ACQUISITION
   const acquireLiveDeviceGps = useCallback(() => {
-    if (!navigator.geolocation) {
+    if (typeof window === 'undefined' || !navigator.geolocation) {
       setGpsStatus('unsupported');
       return;
     }
@@ -158,16 +192,15 @@ export const MapTilerMap: React.FC<MapTilerMapProps> = ({
       (position) => {
         const { latitude, longitude, accuracy } = position.coords;
         setTargetCoords({ lat: latitude, lng: longitude });
-        setAccuracyRadius(Math.round(accuracy) || 5);
+        setAccuracyRadius(Math.round(accuracy) || 6);
         setGpsStatus(accuracy > 60 ? 'low_accuracy' : 'granted');
         setSatelliteLock(true);
-        setHasAcquiredInitialGps(true);
 
-        // Center map on customer's genuine location
+        // Center map immediately on customer's real device position
         if (mapInstanceRef.current) {
           mapInstanceRef.current.flyTo({
             center: [longitude, latitude],
-            zoom: 16,
+            zoom: 15,
             essential: true,
           });
         }
@@ -184,22 +217,100 @@ export const MapTilerMap: React.FC<MapTilerMapProps> = ({
       },
       {
         enableHighAccuracy: true,
-        timeout: 10000,
+        timeout: 9000,
         maximumAge: 0,
       }
     );
   }, [performReverseGeocode]);
 
-  // CRITICAL REQUIREMENT: Automatically detect customer's live GPS on mount!
+  // Automatically adjust zoom levels and center the map to fit both rider's and customer's markers simultaneously
+  const fitMapToBounds = useCallback(
+    (immediate: boolean = false) => {
+      if (!mapInstanceRef.current) return;
+      const cLat = targetCoords.lat;
+      const cLng = targetCoords.lng;
+      const rLat = animatedDriverCoords.lat;
+      const rLng = animatedDriverCoords.lng;
+
+      if (!cLat || !cLng || !rLat || !rLng) return;
+
+      try {
+        const bounds = new maplibregl.LngLatBounds();
+        bounds.extend([cLng, cLat]);
+        bounds.extend([rLng, rLat]);
+
+        const span = Math.max(Math.abs(cLat - rLat), Math.abs(cLng - rLng));
+        // Dynamic optimal zoom level: closer = zoom in further
+        const maxZoom = span < 0.002 ? 16 : span < 0.01 ? 15 : span < 0.03 ? 14 : 13;
+
+        mapInstanceRef.current.fitBounds(bounds, {
+          padding: { top: 80, bottom: 80, left: 70, right: 70 },
+          maxZoom,
+          duration: immediate ? 0 : 800,
+        });
+      } catch {
+        // graceful fallback
+      }
+    },
+    [targetCoords.lat, targetCoords.lng, animatedDriverCoords.lat, animatedDriverCoords.lng]
+  );
+
+  // Focus directly on Rider Marker
+  const focusRider = () => {
+    if (!mapInstanceRef.current) return;
+    mapInstanceRef.current.easeTo({
+      center: [animatedDriverCoords.lng, animatedDriverCoords.lat],
+      zoom: 16,
+      duration: 700,
+    });
+  };
+
+  // Focus directly on Customer Marker
+  const focusCustomer = () => {
+    if (!mapInstanceRef.current) return;
+    mapInstanceRef.current.easeTo({
+      center: [targetCoords.lng, targetCoords.lat],
+      zoom: 16,
+      duration: 700,
+    });
+  };
+
+  // Sync prop updates if parent explicitly passes customerLocation
   useEffect(() => {
-    if (autoDetectLocation && !hasAcquiredInitialGps) {
+    if (customerLocation && customerLocation.lat && customerLocation.lng) {
+      setTargetCoords({ lat: customerLocation.lat, lng: customerLocation.lng });
+    }
+  }, [customerLocation?.lat, customerLocation?.lng]);
+
+  // Sync prop updates if parent explicitly passes driverLocation (e.g. animated movement in TrackingView)
+  useEffect(() => {
+    if (driverLocation && driverLocation.lat && driverLocation.lng) {
+      setAnimatedDriverCoords({ lat: driverLocation.lat, lng: driverLocation.lng });
+    }
+  }, [driverLocation?.lat, driverLocation?.lng]);
+
+  // Automatically adjust zoom levels and center the map to fit both rider's and customer's markers simultaneously
+  useEffect(() => {
+    if (!autoFitBounds) return;
+    if (!mapInstanceRef.current || !mapInstanceRef.current.isStyleLoaded()) return;
+
+    const timer = setTimeout(() => {
+      fitMapToBounds();
+    }, 200);
+
+    return () => clearTimeout(timer);
+  }, [autoFitBounds, fitMapToBounds]);
+
+  // Auto-acquire device GPS on mount if enabled
+  useEffect(() => {
+    if (autoDetectLocation) {
       acquireLiveDeviceGps();
     }
-  }, [autoDetectLocation, hasAcquiredInitialGps, acquireLiveDeviceGps]);
+  }, [autoDetectLocation, acquireLiveDeviceGps]);
 
   // Continuous watchPosition for live location updates
   useEffect(() => {
-    if (!navigator.geolocation) return;
+    if (typeof window === 'undefined' || !navigator.geolocation) return;
 
     const watchId = navigator.geolocation.watchPosition(
       (position) => {
@@ -208,7 +319,7 @@ export const MapTilerMap: React.FC<MapTilerMapProps> = ({
         setSatelliteLock(true);
         setGpsStatus(accuracy > 60 ? 'low_accuracy' : 'granted');
 
-        // Only auto-update if order is not pinned to a specific custom spot
+        // Update coordinates if pinpoint mode is not locking a custom spot
         if (!enablePinpoint) {
           setTargetCoords({ lat: latitude, lng: longitude });
         }
@@ -250,56 +361,52 @@ export const MapTilerMap: React.FC<MapTilerMapProps> = ({
     performReverseGeocode(newLat, newLng);
   };
 
-  // Simulate smooth driver movement towards destination when order is active
+  // Simulate smooth driver movement towards destination when order is active (fallback when not provided by parent)
   useEffect(() => {
+    // If parent provides active driverLocation coordinates (e.g., animated in TrackingView), do not override
+    if (driverLocation && typeof driverLocation.lat === 'number' && typeof driverLocation.lng === 'number') {
+      return;
+    }
+
     if (orderStatus === 'Delivered') {
       setAnimatedDriverCoords({ lat: targetCoords.lat, lng: targetCoords.lng });
       return;
     }
 
-    if (!['On The Way', 'Arriving Soon'].includes(orderStatus)) {
+    if (!['On The Way', 'Arriving Soon', 'Driver Assigned'].includes(orderStatus)) {
       setAnimatedDriverCoords(driverLocation);
       return;
     }
 
     const interval = setInterval(() => {
       setAnimatedDriverCoords((prev) => {
-        const dLat = (targetCoords.lat - prev.lat) * 0.06;
-        const dLng = (targetCoords.lng - prev.lng) * 0.06;
+        const dLat = (targetCoords.lat - prev.lat) * 0.05;
+        const dLng = (targetCoords.lng - prev.lng) * 0.05;
         return {
           lat: prev.lat + dLat,
           lng: prev.lng + dLng,
         };
       });
 
-      setBowserLatency(Math.floor(20 + Math.random() * 8));
-    }, 3000);
+      setBowserLatency(Math.floor(18 + Math.random() * 10));
+    }, 2500);
 
     return () => clearInterval(interval);
   }, [orderStatus, targetCoords, driverLocation]);
+
+  // MapTiler API Key from env (optional, fallback raster style is used if not present)
+  const mapTilerKey = (import.meta.env.VITE_MAPTILER_API_KEY as string) || '';
 
   // Initialize MapLibre GL map
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
-    if (!isKeyConfigured) {
-      setUsingFallbackMap(true);
-      return;
-    }
-
     try {
-      const styleUrl =
-        activeStyle === 'tactical-dark'
-          ? `https://api.maptiler.com/maps/dataviz-dark/style.json?key=${mapTilerKey}`
-          : activeStyle === 'fleet-amber'
-          ? `https://api.maptiler.com/maps/outdoor-v2/style.json?key=${mapTilerKey}`
-          : activeStyle === 'satellite-hybrid'
-          ? `https://api.maptiler.com/maps/hybrid/style.json?key=${mapTilerKey}`
-          : `https://api.maptiler.com/maps/streets-v2/style.json?key=${mapTilerKey}`;
+      const styleConfig = getMapStyleConfig(activeStyle, mapTilerKey);
 
       const map = new maplibregl.Map({
         container: mapContainerRef.current,
-        style: styleUrl,
+        style: styleConfig as any,
         center: [targetCoords.lng, targetCoords.lat],
         zoom: 14,
         attributionControl: false,
@@ -308,15 +415,56 @@ export const MapTilerMap: React.FC<MapTilerMapProps> = ({
       map.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'top-right');
 
       map.on('error', () => {
+        // If WebGL or style failed, switch gracefully to dynamic vector simulation
         setUsingFallbackMap(true);
       });
 
       map.on('load', () => {
-        // Customer / Target Marker
+        // Add dynamic route line GeoJSON layer between driver and customer
+        map.addSource('route-line-source', {
+          type: 'geojson',
+          data: {
+            type: 'Feature',
+            properties: {},
+            geometry: {
+              type: 'LineString',
+              coordinates: [
+                [animatedDriverCoords.lng, animatedDriverCoords.lat],
+                [targetCoords.lng, targetCoords.lat],
+              ],
+            },
+          },
+        });
+
+        map.addLayer({
+          id: 'route-line-layer',
+          type: 'line',
+          source: 'route-line-source',
+          layout: {
+            'line-join': 'round',
+            'line-cap': 'round',
+          },
+          paint: {
+            'line-color': '#10b981',
+            'line-width': 4,
+            'line-dasharray': [2, 2],
+          },
+        });
+
+        // 1. Customer Live Marker
         const custEl = document.createElement('div');
-        custEl.className =
-          'w-10 h-10 bg-emerald-600 rounded-full border-2 border-white shadow-2xl flex items-center justify-center text-white font-bold text-sm cursor-grab active:cursor-grabbing ring-4 ring-emerald-500/40 animate-pulse';
-        custEl.innerHTML = '📍';
+        custEl.className = 'group relative flex flex-col items-center cursor-grab active:cursor-grabbing';
+        custEl.innerHTML = `
+          <div class="mb-1 px-2 py-0.5 rounded-full bg-emerald-600 text-white font-mono font-bold text-[9px] shadow-lg border border-white/40 flex items-center gap-1">
+            <span class="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
+            <span>Customer Live Spot</span>
+          </div>
+          <div class="relative flex items-center justify-center">
+            <div class="w-10 h-10 rounded-full bg-gradient-to-tr from-emerald-700 via-emerald-600 to-teal-400 border-2 border-white shadow-[0_0_18px_rgba(16,185,129,0.8)] flex items-center justify-center text-white text-base">
+              📍
+            </div>
+          </div>
+        `;
 
         const custMarker = new maplibregl.Marker({ element: custEl, draggable: enablePinpoint || interactive })
           .setLngLat([targetCoords.lng, targetCoords.lat])
@@ -330,15 +478,34 @@ export const MapTilerMap: React.FC<MapTilerMapProps> = ({
 
         customerMarkerRef.current = custMarker;
 
-        // Driver / Bowser Marker
+        // 2. Driver Marker with Distance Badge
         const drvEl = document.createElement('div');
-        drvEl.className =
-          'w-10 h-10 bg-gradient-to-tr from-amber-600 to-amber-400 rounded-full border-2 border-white shadow-2xl flex items-center justify-center text-white text-sm font-bold ring-4 ring-amber-500/30';
-        drvEl.innerHTML = '🚚';
+        drvEl.className = 'group relative flex flex-col items-center pointer-events-none transition-transform duration-300';
+        drvEl.innerHTML = `
+          <div class="mb-1 px-2.5 py-0.5 rounded-full bg-amber-500 text-neutral-950 font-mono font-black text-[10px] shadow-lg flex items-center gap-1.5 border border-amber-300">
+            <span class="w-1.5 h-1.5 rounded-full bg-neutral-950 animate-pulse"></span>
+            <span>🚚 Rider</span>
+            <span id="maptiler-rider-dist" class="bg-black/25 text-neutral-950 px-1.5 py-0.5 rounded text-[9px] font-bold">
+              ${calculateHaversineKm(animatedDriverCoords.lat, animatedDriverCoords.lng, targetCoords.lat, targetCoords.lng).toFixed(2)} km
+            </span>
+          </div>
+          <div class="relative flex items-center justify-center">
+            <span class="absolute -inset-3 rounded-full bg-amber-400 opacity-60 animate-ping"></span>
+            <span class="absolute -inset-1.5 rounded-full bg-amber-500 opacity-40 animate-pulse"></span>
+            <div class="relative w-11 h-11 rounded-full bg-gradient-to-tr from-amber-600 via-amber-500 to-amber-300 border-2 border-white shadow-[0_0_20px_rgba(245,158,11,0.9)] flex items-center justify-center text-neutral-950 text-base z-10 transition-transform duration-300">
+              ⛽
+            </div>
+          </div>
+        `;
 
         driverMarkerRef.current = new maplibregl.Marker({ element: drvEl })
           .setLngLat([animatedDriverCoords.lng, animatedDriverCoords.lat])
           .addTo(map);
+
+        // Auto-fit bounding box to show BOTH rider and customer on screen
+        if (autoFitBounds) {
+          fitMapToBounds(true);
+        }
       });
 
       if (interactive) {
@@ -360,38 +527,67 @@ export const MapTilerMap: React.FC<MapTilerMapProps> = ({
     } catch {
       setUsingFallbackMap(true);
     }
-  }, [isKeyConfigured, mapTilerKey, activeStyle]);
+  }, [mapTilerKey, activeStyle]);
 
-  // Update marker positions
-  useEffect(() => {
-    if (driverMarkerRef.current) {
-      driverMarkerRef.current.setLngLat([animatedDriverCoords.lng, animatedDriverCoords.lat]);
-    }
-    if (customerMarkerRef.current) {
-      customerMarkerRef.current.setLngLat([targetCoords.lng, targetCoords.lat]);
-    }
-  }, [animatedDriverCoords, targetCoords]);
-
-  // EXACT DISTANCE BETWEEN RIDER AND CUSTOMER
+  // EXACT DISTANCE BETWEEN RIDER AND CUSTOMER (Haversine)
   const liveDistanceKm = calculateHaversineKm(
     animatedDriverCoords.lat,
     animatedDriverCoords.lng,
     targetCoords.lat,
     targetCoords.lng
   );
-  // Estimated arrival time in minutes (based on 25 km/h urban speed)
-  const liveEtaMinutes = Math.max(2, Math.round((liveDistanceKm / 25) * 60));
+  // Estimated arrival time in minutes (based on ~25 km/h urban speed)
+  const liveEtaMinutes = deliveryEtaMinutes ?? Math.max(2, Math.round((liveDistanceKm / 25) * 60));
 
-  // Uber Deep Link URL
-  const uberDeepLink = `https://m.uber.com/ul/?action=setPickup&pickup=my_location&dropoff[latitude]=${targetCoords.lat}&dropoff[longitude]=${targetCoords.lng}&dropoff[nickname]=FuelGo%20Delivery%20Point`;
+  // Update marker positions and dynamic route line on map
+  useEffect(() => {
+    if (driverMarkerRef.current) {
+      driverMarkerRef.current.setLngLat([animatedDriverCoords.lng, animatedDriverCoords.lat]);
+      const distBadge = document.getElementById('maptiler-rider-dist');
+      if (distBadge) {
+        distBadge.textContent = `${liveDistanceKm.toFixed(2)} km`;
+      }
+    }
+    if (customerMarkerRef.current) {
+      customerMarkerRef.current.setLngLat([targetCoords.lng, targetCoords.lat]);
+    }
+
+    if (mapInstanceRef.current && mapInstanceRef.current.isStyleLoaded()) {
+      const source = mapInstanceRef.current.getSource('route-line-source') as maplibregl.GeoJSONSource;
+      if (source) {
+        source.setData({
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'LineString',
+            coordinates: [
+              [animatedDriverCoords.lng, animatedDriverCoords.lat],
+              [targetCoords.lng, targetCoords.lat],
+            ],
+          },
+        });
+      }
+    }
+  }, [animatedDriverCoords, targetCoords, liveDistanceKm]);
+
+  // Calculate dynamic percentage positions for fallback visualization
+  const dLatDeg = animatedDriverCoords.lat - targetCoords.lat;
+  const dLngDeg = animatedDriverCoords.lng - targetCoords.lng;
+  const maxSpan = 0.04;
+  const riderLeftPct = Math.max(12, Math.min(88, 50 + (dLngDeg / maxSpan) * 35));
+  const riderTopPct = Math.max(15, Math.min(85, 50 - (dLatDeg / maxSpan) * 35));
+  const custLeftPct = 50;
+  const custTopPct = 50;
 
   return (
-    <div className={`relative w-full h-full min-h-[380px] rounded-2xl overflow-hidden border border-neutral-800 bg-[#090a0f] shadow-2xl flex flex-col ${className}`}>
+    <div
+      className={`relative w-full h-full min-h-[380px] rounded-2xl overflow-hidden border border-neutral-800 bg-[#090a0f] shadow-2xl flex flex-col ${className}`}
+    >
       {/* 1. MAP VIEWPORT */}
       {!usingFallbackMap ? (
         <div ref={mapContainerRef} className="w-full h-full flex-1" />
       ) : (
-        /* Dark Cyber Vector Simulation */
+        /* Dynamic Vector Simulation when WebGL is unmounted */
         <div
           onClick={(e) => {
             if (!interactive) return;
@@ -399,35 +595,34 @@ export const MapTilerMap: React.FC<MapTilerMapProps> = ({
             const clickX = (e.clientX - rect.left) / rect.width;
             const clickY = (e.clientY - rect.top) / rect.height;
 
-            const dLat = (clickY - 0.5) * -0.005;
-            const dLng = (clickX - 0.5) * 0.005;
+            const dLat = (clickY - 0.5) * -0.006;
+            const dLng = (clickX - 0.5) * 0.006;
             const newLat = Math.round((targetCoords.lat + dLat) * 1000000) / 1000000;
             const newLng = Math.round((targetCoords.lng + dLng) * 1000000) / 1000000;
             setTargetCoords({ lat: newLat, lng: newLng });
             performReverseGeocode(newLat, newLng);
           }}
-          className="relative w-full h-full flex-1 bg-[#090b10] overflow-hidden flex items-center justify-center cursor-crosshair select-none"
+          className="relative w-full h-full flex-1 bg-[#0a0d14] overflow-hidden flex items-center justify-center cursor-crosshair select-none"
         >
           {/* Neon Dark Grid & Arteries */}
-          <svg className="absolute inset-0 w-full h-full opacity-45 pointer-events-none" xmlns="http://www.w3.org/2000/svg">
+          <svg className="absolute inset-0 w-full h-full opacity-40 pointer-events-none" xmlns="http://www.w3.org/2000/svg">
             <defs>
               <pattern id="dark-grid" width="36" height="36" patternUnits="userSpaceOnUse">
                 <path d="M 36 0 L 0 0 0 36" fill="none" stroke="#1e293b" strokeWidth="0.8" />
               </pattern>
             </defs>
             <rect width="100%" height="100%" fill="url(#dark-grid)" />
+            {/* Roads */}
+            <path d="M 0 110 Q 220 160 420 95 T 820 210" stroke="#059669" strokeWidth="4" fill="none" opacity="0.6" />
+            <path d="M 130 0 Q 160 260 360 460" stroke="#0284c7" strokeWidth="3" fill="none" opacity="0.5" />
+            <path d="M 60 360 Q 310 290 620 330" stroke="#f59e0b" strokeWidth="3" fill="none" opacity="0.5" />
 
-            {/* Road network */}
-            <path d="M 0 110 Q 220 160 420 95 T 820 210" stroke="#059669" strokeWidth="4.5" fill="none" opacity="0.6" />
-            <path d="M 130 0 Q 160 260 360 460" stroke="#0284c7" strokeWidth="3.5" fill="none" opacity="0.5" />
-            <path d="M 60 360 Q 310 290 620 330" stroke="#f59e0b" strokeWidth="4" fill="none" opacity="0.5" />
-
-            {/* DYNAMIC ROUTE LINE CONNECTING RIDER AND CUSTOMER */}
+            {/* Dynamic Pulsing route line between rider and customer */}
             <line
-              x1="28%"
-              y1="36%"
-              x2="72%"
-              y2="64%"
+              x1={`${riderLeftPct}%`}
+              y1={`${riderTopPct}%`}
+              x2={`${custLeftPct}%`}
+              y2={`${custTopPct}%`}
               stroke="#10b981"
               strokeWidth="4"
               strokeDasharray="8 6"
@@ -435,23 +630,23 @@ export const MapTilerMap: React.FC<MapTilerMapProps> = ({
             />
           </svg>
 
-          {/* RIDER / BOWSER MARKER WITH DISTANCE PILL */}
+          {/* RIDER / BOWSER MARKER WITH REAL-TIME DISTANCE CALLOUT */}
           <div
-            className="absolute transition-all duration-1000 ease-out z-20 flex flex-col items-center pointer-events-none"
+            className="absolute transition-all duration-700 ease-out z-20 flex flex-col items-center pointer-events-none"
             style={{
-              top: '36%',
-              left: '28%',
+              top: `${riderTopPct}%`,
+              left: `${riderLeftPct}%`,
               transform: 'translate(-50%, -50%)',
             }}
           >
-            {/* Live Distance Callout Floating Above Rider */}
-            <div className="mb-1.5 px-2.5 py-1 rounded-full bg-amber-500 text-neutral-950 font-black text-[11px] font-mono shadow-[0_0_12px_rgba(245,158,11,0.6)] flex items-center gap-1 animate-bounce">
+            <div className="mb-1 px-2.5 py-1 rounded-full bg-amber-500 text-neutral-950 font-black text-[11px] font-mono shadow-[0_0_14px_rgba(245,158,11,0.6)] flex items-center gap-1">
               <Car className="w-3.5 h-3.5" />
-              <span>{orderStatus === 'Delivered' ? 'Arrived!' : `${liveDistanceKm} km to you`}</span>
+              <span>{orderStatus === 'Delivered' ? 'Arrived!' : `${liveDistanceKm.toFixed(2)} km to delivery`}</span>
             </div>
 
             <div className="relative">
-              <span className="absolute -inset-2 rounded-full bg-amber-400 opacity-70 animate-ping" />
+              <span className="absolute -inset-2.5 rounded-full bg-amber-400 opacity-60 animate-ping" />
+              <span className="absolute -inset-1 rounded-full bg-amber-500 opacity-40 animate-pulse" />
               <div className="relative w-11 h-11 rounded-full bg-gradient-to-tr from-amber-600 via-amber-500 to-amber-300 border-2 border-white shadow-[0_0_20px_rgba(245,158,11,0.8)] flex items-center justify-center text-neutral-950">
                 <Car className="w-6 h-6" />
               </div>
@@ -463,19 +658,18 @@ export const MapTilerMap: React.FC<MapTilerMapProps> = ({
             </div>
           </div>
 
-          {/* CUSTOMER GENUINE LIVE LOCATION MARKER */}
+          {/* CUSTOMER LIVE POSITION MARKER */}
           <div
             className="absolute z-20 flex flex-col items-center cursor-grab active:cursor-grabbing group"
             style={{
-              top: '64%',
-              left: '72%',
+              top: `${custTopPct}%`,
+              left: `${custLeftPct}%`,
               transform: 'translate(-50%, -50%)',
             }}
           >
-            {/* Customer Live GPS Indicator */}
-            <div className="mb-1.5 px-2.5 py-1 rounded-full bg-emerald-600 text-white font-bold text-[10px] font-mono shadow-[0_0_12px_rgba(16,185,129,0.7)] flex items-center gap-1">
+            <div className="mb-1 px-2.5 py-1 rounded-full bg-emerald-600 text-white font-bold text-[10px] font-mono shadow-[0_0_14px_rgba(16,185,129,0.7)] flex items-center gap-1">
               <span className="w-2 h-2 rounded-full bg-emerald-300 animate-pulse" />
-              <span>Customer Live Position</span>
+              <span>Customer Live Coordinates</span>
             </div>
 
             <div className="relative">
@@ -495,10 +689,10 @@ export const MapTilerMap: React.FC<MapTilerMapProps> = ({
       {/* 2. TOP FLOATING TELEMETRY BAR: REAL-TIME DISTANCE & GPS LOCK */}
       <div className="absolute top-3 left-3 z-30 flex flex-wrap items-center gap-2">
         {/* Dynamic Distance Badge (Rider to Customer) */}
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-neutral-950/95 backdrop-blur-md border border-emerald-500/60 shadow-[0_0_15px_rgba(16,185,129,0.25)] text-white text-xs font-mono">
-          <Navigation className="w-3.5 h-3.5 text-emerald-400" />
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-neutral-950/95 backdrop-blur-md border border-emerald-500/60 shadow-[0_0_18px_rgba(16,185,129,0.3)] text-white text-xs font-mono">
+          <Navigation className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
           <span className="text-neutral-400">Rider Distance:</span>
-          <span className="font-black text-emerald-300 text-sm">{liveDistanceKm} km</span>
+          <span className="font-black text-emerald-300 text-sm">{liveDistanceKm.toFixed(2)} km</span>
           <span className="text-neutral-600">•</span>
           <span className="text-amber-300 font-bold">~{liveEtaMinutes} min ETA</span>
         </div>
@@ -524,7 +718,7 @@ export const MapTilerMap: React.FC<MapTilerMapProps> = ({
         <button
           onClick={acquireLiveDeviceGps}
           title="Refresh Device Live Location"
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg active:scale-95 transition-all text-xs font-bold"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-neutral-950 shadow-lg active:scale-95 transition-all text-xs font-black cursor-pointer"
         >
           <Crosshair className={`w-3.5 h-3.5 ${gpsStatus === 'tracking' ? 'animate-spin' : ''}`} />
           <span className="hidden sm:inline">Refresh My GPS</span>
@@ -534,7 +728,7 @@ export const MapTilerMap: React.FC<MapTilerMapProps> = ({
         <div className="relative">
           <button
             onClick={() => setShowStyleMenu(!showStyleMenu)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-900/90 hover:bg-neutral-800 text-neutral-200 border border-neutral-700 shadow-md text-xs font-bold transition-all"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-900/90 hover:bg-neutral-800 text-neutral-200 border border-neutral-700 shadow-md text-xs font-bold transition-all cursor-pointer"
           >
             <Layers className="w-3.5 h-3.5 text-emerald-400" />
             <span className="hidden sm:inline">Styles</span>
@@ -557,7 +751,7 @@ export const MapTilerMap: React.FC<MapTilerMapProps> = ({
                     setActiveStyle(st.id as MapTailorStyle);
                     setShowStyleMenu(false);
                   }}
-                  className={`w-full text-left px-3.5 py-2 flex flex-col hover:bg-neutral-800 transition-colors ${
+                  className={`w-full text-left px-3.5 py-2 flex flex-col hover:bg-neutral-800 transition-colors cursor-pointer ${
                     activeStyle === st.id ? 'bg-neutral-800 text-emerald-400 font-bold' : 'text-neutral-300'
                   }`}
                 >
@@ -572,7 +766,7 @@ export const MapTilerMap: React.FC<MapTilerMapProps> = ({
         {/* Telemetry HUD Toggle */}
         <button
           onClick={() => setShowTelemetryHud(!showTelemetryHud)}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold shadow-md transition-all ${
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold shadow-md transition-all cursor-pointer ${
             showTelemetryHud
               ? 'bg-neutral-900 text-emerald-400 border border-emerald-500'
               : 'bg-neutral-900/90 text-neutral-200 hover:bg-neutral-800 border border-neutral-700'
@@ -585,12 +779,12 @@ export const MapTilerMap: React.FC<MapTilerMapProps> = ({
 
       {/* 4. 4-WAY MICRO-NUDGE KEYPAD */}
       {showMicroNudge && (
-        <div className="absolute left-3 bottom-16 z-30 bg-neutral-950/90 backdrop-blur-md p-2 rounded-2xl border border-neutral-800 shadow-2xl flex flex-col items-center gap-1">
+        <div className="absolute left-3 bottom-14 z-30 bg-neutral-950/90 backdrop-blur-md p-2 rounded-2xl border border-neutral-800 shadow-2xl flex flex-col items-center gap-1">
           <span className="text-[9px] uppercase font-bold text-neutral-400 font-mono tracking-wider">Nudge</span>
           <button
             onClick={() => handleMicroNudge('N')}
             title="Nudge North 10m"
-            className="p-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-white active:scale-95 transition-all"
+            className="p-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-white active:scale-95 transition-all cursor-pointer"
           >
             <ChevronUp className="w-4 h-4 text-emerald-400" />
           </button>
@@ -598,21 +792,21 @@ export const MapTilerMap: React.FC<MapTilerMapProps> = ({
             <button
               onClick={() => handleMicroNudge('W')}
               title="Nudge West 10m"
-              className="p-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-white active:scale-95 transition-all"
+              className="p-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-white active:scale-95 transition-all cursor-pointer"
             >
               <ChevronLeft className="w-4 h-4 text-emerald-400" />
             </button>
             <button
               onClick={() => handleMicroNudge('CENTER')}
-              title="Center on Live GPS"
-              className="p-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white active:scale-95 font-black text-[10px] w-6 h-6 flex items-center justify-center shadow"
+              title="Center GPS"
+              className="p-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-neutral-950 active:scale-95 transition-all cursor-pointer"
             >
-              •
+              <Crosshair className="w-4 h-4" />
             </button>
             <button
               onClick={() => handleMicroNudge('E')}
               title="Nudge East 10m"
-              className="p-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-white active:scale-95 transition-all"
+              className="p-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-white active:scale-95 transition-all cursor-pointer"
             >
               <ChevronRight className="w-4 h-4 text-emerald-400" />
             </button>
@@ -620,107 +814,82 @@ export const MapTilerMap: React.FC<MapTilerMapProps> = ({
           <button
             onClick={() => handleMicroNudge('S')}
             title="Nudge South 10m"
-            className="p-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-white active:scale-95 transition-all"
+            className="p-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-white active:scale-95 transition-all cursor-pointer"
           >
             <ChevronDown className="w-4 h-4 text-emerald-400" />
           </button>
         </div>
       )}
 
-      {/* 5. TELEMETRY HUD OVERLAY */}
+      {/* 5. TELEMETRY HUD OVERLAY (Check Map Status) */}
       {showTelemetryHud && (
-        <div className="absolute inset-x-3 top-14 z-40 p-4 rounded-2xl bg-neutral-950/98 backdrop-blur-md border border-neutral-700 text-white shadow-2xl space-y-3">
-          <div className="flex items-center justify-between border-b border-neutral-800 pb-2">
-            <div className="flex items-center gap-2">
-              <Activity className="w-4 h-4 text-emerald-400" />
-              <h4 className="font-bold text-xs uppercase tracking-wider text-emerald-400 font-mono">
-                Live GPS & Bowser Telematics HUD
-              </h4>
-            </div>
-            <button
-              onClick={() => setShowTelemetryHud(false)}
-              className="text-neutral-400 hover:text-white text-xs font-bold"
-            >
-              Close
-            </button>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
-            <div className="p-2.5 rounded-xl bg-neutral-900 border border-neutral-800 space-y-1">
-              <span className="text-[10px] text-neutral-400 uppercase block">Distance to Customer</span>
-              <p className="font-bold text-emerald-400 text-base">{liveDistanceKm} km</p>
-            </div>
-            <div className="p-2.5 rounded-xl bg-neutral-900 border border-neutral-800 space-y-1">
-              <span className="text-[10px] text-neutral-400 uppercase block">Arrival ETA</span>
-              <p className="font-bold text-amber-400 text-base">~{liveEtaMinutes} mins</p>
-            </div>
-            <div className="p-2.5 rounded-xl bg-neutral-900 border border-neutral-800 space-y-1">
-              <span className="text-[10px] text-neutral-400 uppercase block">Customer GPS Lock</span>
-              <p className="font-bold text-white text-xs">
-                {satelliteLock ? `Active (±${accuracyRadius || 5}m)` : 'Acquiring Fix...'}
-              </p>
-            </div>
-            <div className="p-2.5 rounded-xl bg-neutral-900 border border-neutral-800 space-y-1">
-              <span className="text-[10px] text-neutral-400 uppercase block">Bowser 4G Stream</span>
-              <p className="font-bold text-emerald-300 text-xs">4G LTE • {bowserLatency}ms</p>
-            </div>
-          </div>
-
-          <div className="p-2.5 rounded-xl bg-neutral-900/80 border border-neutral-800 flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
-            <span className="text-neutral-400">Customer Target Lat/Lng:</span>
-            <span className="text-emerald-400 font-bold">
-              {targetCoords.lat.toFixed(6)}° N, {targetCoords.lng.toFixed(6)}° E
+        <div className="absolute right-3 bottom-14 z-30 w-72 bg-neutral-950/95 backdrop-blur-md rounded-2xl border border-neutral-800 p-4 shadow-2xl space-y-2 text-xs font-mono">
+          <div className="flex items-center justify-between pb-1 border-b border-neutral-800">
+            <span className="font-bold text-white uppercase text-[10px] tracking-wider flex items-center gap-1.5">
+              <Activity className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Live Telemetry HUD</span>
             </span>
+            <span className="text-[10px] text-emerald-400 font-bold">ONLINE</span>
+          </div>
+
+          <div className="flex justify-between text-neutral-400">
+            <span>GPS Satellite Lock:</span>
+            <span className={satelliteLock ? 'text-emerald-400 font-bold' : 'text-amber-400'}>
+              {satelliteLock ? 'High-Precision 3D Lock' : 'Standby / Simulated'}
+            </span>
+          </div>
+
+          <div className="flex justify-between text-neutral-400">
+            <span>Accuracy Radius:</span>
+            <span className="text-white font-bold">{accuracyRadius ? `±${accuracyRadius} meters` : '±6 meters'}</span>
+          </div>
+
+          <div className="flex justify-between text-neutral-400">
+            <span>Target Lat / Lng:</span>
+            <span className="text-emerald-300 font-bold">
+              {targetCoords.lat.toFixed(5)}, {targetCoords.lng.toFixed(5)}
+            </span>
+          </div>
+
+          <div className="flex justify-between text-neutral-400">
+            <span>Rider Lat / Lng:</span>
+            <span className="text-amber-300 font-bold">
+              {animatedDriverCoords.lat.toFixed(5)}, {animatedDriverCoords.lng.toFixed(5)}
+            </span>
+          </div>
+
+          <div className="flex justify-between text-neutral-400">
+            <span>Rider Distance:</span>
+            <span className="text-emerald-400 font-black">{liveDistanceKm} km (~{liveEtaMinutes}m)</span>
+          </div>
+
+          <div className="flex justify-between text-neutral-400">
+            <span>Bowser Telemetry:</span>
+            <span className="text-white">{bowserLatency} ms (4G LTE)</span>
+          </div>
+
+          <div className="flex justify-between text-neutral-400">
+            <span>Active Map Tailor:</span>
+            <span className="text-amber-400 font-bold capitalize">{activeStyle.replace('-', ' ')}</span>
           </div>
         </div>
       )}
 
-      {/* 6. BOTTOM TELEMETRY FOOTER */}
-      <div className="relative z-30 p-3 bg-neutral-950/95 backdrop-blur-md border-t border-neutral-800 text-white flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-1.5">
-            <Navigation className="w-4 h-4 text-emerald-400" />
-            <div>
-              <p className="text-[9px] uppercase text-neutral-500 font-bold">Live Distance</p>
-              <p className="text-xs font-black text-emerald-400">{liveDistanceKm} km</p>
-            </div>
-          </div>
-
-          <div className="h-6 w-px bg-neutral-800" />
-
-          <div className="flex items-center gap-1.5">
-            <Clock className="w-4 h-4 text-amber-400" />
-            <div>
-              <p className="text-[9px] uppercase text-neutral-500 font-bold">Est. Arrival</p>
-              <p className="text-xs font-black text-amber-300">
-                {orderStatus === 'Delivered' ? 'Delivered' : `~${liveEtaMinutes} mins`}
-              </p>
-            </div>
-          </div>
-
-          <div className="h-6 w-px bg-neutral-800" />
-
-          <div className="hidden sm:block">
-            <p className="text-[9px] uppercase text-neutral-500 font-bold">Customer Coordinates</p>
-            <p className="text-[11px] text-neutral-300">
-              {targetCoords.lat.toFixed(4)}°N, {targetCoords.lng.toFixed(4)}°E
-            </p>
-          </div>
+      {/* 6. BOTTOM TELEMETRY FOOTER BAR */}
+      <div className="px-4 py-2.5 bg-neutral-950/95 border-t border-neutral-800 text-white flex flex-wrap items-center justify-between gap-3 text-xs z-30">
+        <div className="flex items-center gap-2">
+          <MapPin className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+          <span className="text-neutral-400 truncate max-w-xs sm:max-w-md font-mono text-[11px]">
+            {reverseGeocoding ? 'Resolving street address...' : customerLocation?.address || `${targetCoords.lat.toFixed(5)}°N, ${targetCoords.lng.toFixed(5)}°E`}
+          </span>
         </div>
 
-        {/* Uber Deep Link (Preserved requirement) */}
-        {showUberDeepLink && (
-          <a
-            href={uberDeepLink}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-900 text-white hover:bg-neutral-800 border border-neutral-700 text-xs font-semibold transition-all shadow"
-            title="Open Uber to navigate or hail a ride to this drop point"
-          >
-            <span>Uber Deep Link</span>
-            <ExternalLink className="w-3 h-3 text-neutral-400" />
-          </a>
-        )}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 font-mono text-[11px]">
+            <span className="text-neutral-400">Rider Gap:</span>
+            <span className="font-bold text-amber-300">{liveDistanceKm} km</span>
+          </div>
+        </div>
       </div>
     </div>
   );

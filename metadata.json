@@ -1,6 +1,6 @@
 {
-  "name": "FuelGo — Smart Fuel Delivery",
-  "description": "On-demand smart fuel delivery platform built by Team EAGLE. Order Petrol and Diesel with live GPS tracking, MapTiler maps, instant invoices, and mandatory petrol bunk purchase proof.",
+  "name": "FuelGo — Doorstep Precision Fuel Delivery",
+  "description": "On-demand certified doorstep fuel delivery platform built by Team EAGLE. Order Petrol and Diesel with high-accuracy live GPS tracking, interactive maps, instant GST invoices, and mandatory petrol bunk purchase proof.",
   "requestFramePermissions": ["geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

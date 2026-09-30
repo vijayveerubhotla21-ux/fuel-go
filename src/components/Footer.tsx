@@ -21,7 +21,7 @@ export const Footer: React.FC<FooterProps> = ({
           <div className="space-y-4 md:col-span-1">
             <Logo size="md" showTagline={true} inverted={true} />
             <p className="text-xs text-neutral-400 leading-relaxed">
-              EAGLE — Building Smarter Fuel Delivery.
+              EAGLE — Building Smarter Fuel Logistics.
               On-demand doorstep refueling platform engineered for safety, transparency, and high reliability.
             </p>
             <div className="pt-2">

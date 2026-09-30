@@ -48,13 +48,13 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
   // Scheduled orders
   const scheduledOrders = userOrders.filter((o) => o.isScheduled && o.orderStatus === 'Scheduled');
 
-  // Recent 3 orders
+  // Recent 4 orders
   const recentOrders = userOrders.slice(0, 4);
 
   return (
-    <div className="w-full max-w-6xl mx-auto space-y-6 pb-12">
+    <div className="w-full max-w-6xl mx-auto space-y-6 pb-12 text-neutral-100">
       {/* Welcome Hero Banner */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-neutral-900 via-neutral-950 to-neutral-900 border border-neutral-800 p-6 sm:p-8 text-white shadow-xl">
+      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-neutral-900 via-neutral-950 to-neutral-900 border border-neutral-800 p-6 sm:p-8 text-white shadow-2xl">
         <div className="relative z-10 max-w-2xl space-y-3">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-semibold">
             <Sparkles className="w-3.5 h-3.5" />
@@ -72,21 +72,21 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
           <div className="flex flex-wrap items-center gap-3 pt-2">
             <button
               onClick={() => onOpenOrderModal('Petrol')}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 transition-all active:scale-95"
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-neutral-950 font-black text-xs shadow-lg shadow-emerald-600/30 transition-all active:scale-95 cursor-pointer"
             >
               <Fuel className="w-4 h-4" />
               <span>Order Petrol (1–5L)</span>
             </button>
             <button
               onClick={() => onOpenOrderModal('Diesel')}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-lg shadow-amber-600/30 transition-all active:scale-95"
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-neutral-950 font-black text-xs shadow-lg shadow-amber-600/30 transition-all active:scale-95 cursor-pointer"
             >
               <Fuel className="w-4 h-4" />
               <span>Order Diesel (1–10L)</span>
             </button>
             <button
               onClick={onOpenAiAssistant}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 font-bold text-xs transition-all"
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 font-bold text-xs transition-all cursor-pointer"
             >
               <Bot className="w-4 h-4 text-emerald-400" />
               <span>AI Fuel Assistant</span>
@@ -100,39 +100,39 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
 
       {/* ACTIVE ORDER LIVE WIDGET */}
       {activeOrder && (
-        <div className="bg-white rounded-2xl border-2 border-emerald-500/50 p-5 shadow-lg space-y-4 relative overflow-hidden">
+        <div className="bg-[#0e111a] rounded-3xl border border-emerald-500/40 p-5 shadow-2xl space-y-4 relative overflow-hidden">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">
-              <span className="w-3 h-3 rounded-full bg-emerald-500 animate-ping" />
-              <h2 className="text-base font-black text-neutral-900">Active Delivery in Transit</h2>
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold font-mono bg-emerald-100 text-emerald-800 border border-emerald-200">
+              <span className="w-3 h-3 rounded-full bg-emerald-400 animate-ping" />
+              <h2 className="text-base font-black text-white">Active Delivery in Transit</h2>
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold font-mono bg-emerald-950 text-emerald-300 border border-emerald-500/30">
                 #{activeOrder.orderNumber}
               </span>
             </div>
 
             <button
               onClick={() => onTrackOrder(activeOrder)}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white font-bold text-xs shadow transition-all"
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-neutral-950 font-black text-xs shadow transition-all cursor-pointer"
             >
-              <Navigation className="w-3.5 h-3.5 text-emerald-400" />
+              <Navigation className="w-3.5 h-3.5" />
               <span>Track Live on MapTiler</span>
             </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 p-4 rounded-xl bg-neutral-50 border border-neutral-200 text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 p-4 rounded-2xl bg-neutral-900/90 border border-neutral-800 text-xs">
             <div>
               <span className="text-neutral-500">Fuel & Quantity:</span>
-              <p className="font-bold text-neutral-900 text-sm mt-0.5">
+              <p className="font-bold text-white text-sm mt-0.5">
                 {activeOrder.quantity}L {activeOrder.fuelType}
               </p>
             </div>
             <div>
               <span className="text-neutral-500">Current Status:</span>
-              <p className="font-bold text-emerald-700 mt-0.5">{activeOrder.orderStatus}</p>
+              <p className="font-bold text-emerald-400 mt-0.5">{activeOrder.orderStatus}</p>
             </div>
             <div>
               <span className="text-neutral-500">Assigned Driver:</span>
-              <p className="font-bold text-neutral-800 mt-0.5">
+              <p className="font-bold text-neutral-200 mt-0.5">
                 {activeOrder.driver?.name || 'Assigning...'}
               </p>
             </div>
@@ -142,13 +142,13 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                 {activeOrder.proof ? (
                   <button
                     onClick={() => onViewProof(activeOrder)}
-                    className="font-bold text-emerald-700 hover:underline flex items-center gap-1"
+                    className="font-bold text-emerald-400 hover:underline flex items-center gap-1"
                   >
                     <FileCheck2 className="w-3.5 h-3.5" />
                     <span>View Proof ({activeOrder.proof.verificationStatus})</span>
                   </button>
                 ) : (
-                  <span className="text-amber-600 font-semibold">Awaiting Courier Upload</span>
+                  <span className="text-amber-400 font-semibold">Awaiting Courier Upload</span>
                 )}
               </p>
             </div>
@@ -156,36 +156,36 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
         </div>
       )}
 
-      {/* Grid: Scheduled Deliveries & Safety / AI Shortcuts */}
+      {/* Grid: Scheduled Deliveries & Shortcuts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left 2 Cols: Scheduled & Recent Orders */}
         <div className="lg:col-span-2 space-y-6">
           {/* Scheduled Orders Widget */}
           {scheduledOrders.length > 0 && (
-            <div className="bg-white rounded-2xl border border-neutral-200 p-5 shadow-sm space-y-3">
+            <div className="bg-[#0e111a] rounded-2xl border border-neutral-800 p-5 shadow-xl space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-neutral-900 flex items-center gap-2">
-                  <Calendar className="w-4 h-4 text-purple-600" />
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-purple-400" />
                   <span>Scheduled Deliveries ({scheduledOrders.length})</span>
                 </h3>
               </div>
-              <div className="divide-y divide-neutral-100 text-xs">
+              <div className="divide-y divide-neutral-800/80 text-xs">
                 {scheduledOrders.map((ord) => (
                   <div key={ord.id} className="py-3 flex items-center justify-between">
                     <div>
-                      <p className="font-bold text-neutral-900">
+                      <p className="font-bold text-white">
                         {ord.quantity}L {ord.fuelType} • Order #{ord.orderNumber}
                       </p>
-                      <p className="text-purple-700 font-semibold mt-0.5">
+                      <p className="text-purple-300 font-semibold mt-0.5">
                         🗓️ {ord.scheduledDate} at {ord.scheduledTime}
                       </p>
-                      <p className="text-neutral-500 text-[11px] truncate max-w-sm">
+                      <p className="text-neutral-400 text-[11px] truncate max-w-sm">
                         📍 {ord.deliveryAddress.addressLine}
                       </p>
                     </div>
                     <button
                       onClick={() => onViewInvoice(ord)}
-                      className="px-3 py-1.5 rounded-lg border border-neutral-200 hover:bg-neutral-50 font-bold text-neutral-700 text-xs"
+                      className="px-3 py-1.5 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 font-bold text-neutral-200 text-xs cursor-pointer"
                     >
                       Invoice
                     </button>
@@ -196,12 +196,12 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
           )}
 
           {/* Recent Orders List */}
-          <div className="bg-white rounded-2xl border border-neutral-200 p-5 shadow-sm space-y-4">
+          <div className="bg-[#0e111a] rounded-2xl border border-neutral-800 p-5 shadow-xl space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-neutral-900">Recent Deliveries</h3>
+              <h3 className="text-sm font-bold text-white">Recent Deliveries</h3>
               <button
                 onClick={onViewHistory}
-                className="text-xs font-bold text-emerald-700 hover:text-emerald-800 flex items-center gap-1"
+                className="text-xs font-bold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 cursor-pointer"
               >
                 <span>View All History</span>
                 <ChevronRight className="w-3.5 h-3.5" />
@@ -209,32 +209,32 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
             </div>
 
             {recentOrders.length > 0 ? (
-              <div className="divide-y divide-neutral-100 text-xs">
+              <div className="divide-y divide-neutral-800 text-xs">
                 {recentOrders.map((ord) => (
                   <div key={ord.id} className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
-                        <span className="font-mono font-bold text-neutral-900">#{ord.orderNumber}</span>
-                        <span className="font-bold text-neutral-800">
+                        <span className="font-mono font-bold text-white">#{ord.orderNumber}</span>
+                        <span className="font-bold text-neutral-300">
                           {ord.quantity}L {ord.fuelType}
                         </span>
                         <span
                           className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                             ord.orderStatus === 'Delivered'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : 'bg-neutral-100 text-neutral-700'
+                              ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/40'
+                              : 'bg-neutral-900 text-neutral-400 border border-neutral-700'
                           }`}
                         >
                           {ord.orderStatus}
                         </span>
                       </div>
-                      <p className="text-neutral-500 text-[11px]">
+                      <p className="text-neutral-400 text-[11px]">
                         {new Date(ord.createdAt).toLocaleDateString('en-IN', {
                           day: '2-digit',
                           month: 'short',
                           year: 'numeric',
                         })}{' '}
-                        • Total: <span className="font-mono font-bold text-emerald-700">₹{ord.finalAmount.toFixed(2)}</span>
+                        • Total: <span className="font-mono font-bold text-emerald-400">₹{ord.finalAmount.toFixed(2)}</span>
                       </p>
                     </div>
 
@@ -242,21 +242,21 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                       {ord.proof && (
                         <button
                           onClick={() => onViewProof(ord)}
-                          className="px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold border border-emerald-200"
+                          className="px-2.5 py-1.5 rounded-lg bg-emerald-950 hover:bg-emerald-900 text-emerald-300 text-xs font-bold border border-emerald-500/30 cursor-pointer"
                         >
                           Proof
                         </button>
                       )}
                       <button
                         onClick={() => onViewInvoice(ord)}
-                        className="px-2.5 py-1.5 rounded-lg border border-neutral-200 hover:bg-neutral-100 text-neutral-800 text-xs font-bold"
+                        className="px-2.5 py-1.5 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 text-neutral-200 text-xs font-bold cursor-pointer"
                       >
                         Invoice
                       </button>
                       {['Confirmed', 'Driver Assigned', 'On The Way', 'Arriving Soon'].includes(ord.orderStatus) && (
                         <button
                           onClick={() => onTrackOrder(ord)}
-                          className="px-3 py-1.5 rounded-lg bg-neutral-900 text-white hover:bg-neutral-800 text-xs font-bold"
+                          className="px-3 py-1.5 rounded-lg bg-emerald-600 text-neutral-950 hover:bg-emerald-500 text-xs font-black cursor-pointer"
                         >
                           Track
                         </button>
@@ -274,18 +274,18 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
         {/* Right 1 Col: AI Tutorial & Safety Center Shortcuts */}
         <div className="space-y-6">
           {/* AI Fuel Assistant Teaser Card */}
-          <div className="bg-gradient-to-br from-emerald-950 via-neutral-900 to-neutral-900 rounded-2xl p-5 text-white border border-neutral-800 shadow-sm space-y-3">
+          <div className="bg-gradient-to-br from-emerald-950/60 via-neutral-950 to-neutral-950 rounded-2xl p-5 text-white border border-emerald-500/40 shadow-xl space-y-3">
             <div className="flex items-center gap-2 text-emerald-400">
               <Bot className="w-5 h-5" />
               <h4 className="font-bold text-sm text-white">AI Fuel Assistant</h4>
             </div>
             <p className="text-xs text-neutral-300 leading-relaxed">
               Have questions about Petrol vs Diesel, fuel spill safety, or vehicle tank vapor locks?
-              Our AI Assistant is grounded in PESO guidelines.
+              Our AI Assistant is grounded in PESO safety guidelines.
             </p>
             <button
               onClick={onOpenAiAssistant}
-              className="w-full py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow transition-all flex items-center justify-center gap-1.5"
+              className="w-full py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-neutral-950 font-black text-xs shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <Sparkles className="w-3.5 h-3.5" />
               <span>Launch AI Fuel Assistant</span>
@@ -293,29 +293,29 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
           </div>
 
           {/* Safety Center Card */}
-          <div className="bg-white rounded-2xl border border-neutral-200 p-5 shadow-sm space-y-3">
-            <div className="flex items-center gap-2 text-rose-600">
+          <div className="bg-[#0e111a] rounded-2xl border border-neutral-800 p-5 shadow-xl space-y-3">
+            <div className="flex items-center gap-2 text-rose-400">
               <ShieldAlert className="w-5 h-5" />
-              <h4 className="font-bold text-sm text-neutral-900">Safety & Emergency Center</h4>
+              <h4 className="font-bold text-sm text-white">Safety & Emergency Center</h4>
             </div>
-            <p className="text-xs text-neutral-600 leading-relaxed">
+            <p className="text-xs text-neutral-400 leading-relaxed">
               Review emergency fuel protocols, anti-static safety discipline, and 24/7 national emergency hotlines.
             </p>
             <button
               onClick={onOpenSafetyCenter}
-              className="w-full py-2.5 px-3 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-800 font-bold text-xs border border-neutral-300 transition-colors flex items-center justify-center gap-1.5"
+              className="w-full py-2.5 px-3 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-200 font-bold text-xs border border-neutral-700 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <span>Explore Safety Guidelines</span>
             </button>
           </div>
 
           {/* Guaranteed Petrol Bunk Proof Guarantee */}
-          <div className="bg-amber-50/80 rounded-2xl border border-amber-200 p-5 space-y-2 text-xs">
-            <div className="flex items-center gap-1.5 text-amber-900 font-bold text-sm">
-              <FileCheck2 className="w-4 h-4 text-amber-700" />
+          <div className="bg-amber-950/30 rounded-2xl border border-amber-900/50 p-5 space-y-2 text-xs">
+            <div className="flex items-center gap-1.5 text-amber-300 font-bold text-sm">
+              <FileCheck2 className="w-4 h-4 text-amber-400" />
               <span>100% Genuine OMC Sourced</span>
             </div>
-            <p className="text-neutral-700 leading-relaxed">
+            <p className="text-neutral-400 leading-relaxed">
               Every fuel drop is backed by our strict rule: no order is marked Delivered without a photo of the
               licensed petrol bunk receipt.
             </p>

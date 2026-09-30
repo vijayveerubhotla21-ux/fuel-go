@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   Sparkles,
   Info,
+  Navigation,
 } from 'lucide-react';
 import { FuelType, PaymentMethod, User, Order, DeliveryAddress } from '../types';
 import { store } from '../services/store';
@@ -23,6 +24,7 @@ interface OrderModalProps {
   currentUser: User;
   onOrderCreated: (order: Order) => void;
   initialFuelType?: FuelType;
+  defaultCoords?: { lat: number; lng: number; address?: string };
 }
 
 export const OrderModal: React.FC<OrderModalProps> = ({
@@ -31,6 +33,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
   currentUser,
   onOrderCreated,
   initialFuelType = 'Petrol',
+  defaultCoords,
 }) => {
   const [fuelType, setFuelType] = useState<FuelType>(initialFuelType);
   const [quantity, setQuantity] = useState<number>(initialFuelType === 'Petrol' ? 3 : 5);
@@ -38,26 +41,79 @@ export const OrderModal: React.FC<OrderModalProps> = ({
   const [isScheduled, setIsScheduled] = useState<boolean>(false);
   const [scheduledDate, setScheduledDate] = useState<string>('');
   const [scheduledTime, setScheduledTime] = useState<string>('14:00');
-  const [addressLine, setAddressLine] = useState<string>('Flat 402, Green Glen Layout, Bellandur');
-  const [landmark, setLandmark] = useState<string>('Near Central Mall');
+  const [addressLine, setAddressLine] = useState<string>(
+    defaultCoords?.address || 'Acquiring GPS location...'
+  );
+  const [landmark, setLandmark] = useState<string>('Near Vehicle Spot');
   const [city, setCity] = useState<string>('Bengaluru');
   const [pincode, setPincode] = useState<string>('560103');
-  const [coords, setCoords] = useState<{ lat: number; lng: number }>({ lat: 12.926, lng: 77.6762 });
+  const [coords, setCoords] = useState<{ lat: number; lng: number }>({
+    lat: defaultCoords?.lat || 12.926,
+    lng: defaultCoords?.lng || 77.6762,
+  });
   const [isLocating, setIsLocating] = useState<boolean>(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('UPI');
   const [notes, setNotes] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-  // Sync initial fuel type
+  // Sync initial fuel type and defaultCoords
   useEffect(() => {
     setFuelType(initialFuelType);
     setQuantity(initialFuelType === 'Petrol' ? 3 : 5);
     setCustomQuantity('');
     setErrorMessage(null);
-  }, [initialFuelType, isOpen]);
 
-  // Set min schedule date to tomorrow or today
+    if (defaultCoords && defaultCoords.lat && defaultCoords.lng) {
+      setCoords({ lat: defaultCoords.lat, lng: defaultCoords.lng });
+      if (defaultCoords.address) {
+        setAddressLine(defaultCoords.address);
+      }
+    }
+  }, [initialFuelType, defaultCoords, isOpen]);
+
+  // AUTOMATICALLY ACQUIRE CUSTOMER'S LIVE GPS COORDINATES ON OPEN
+  useEffect(() => {
+    if (isOpen && typeof window !== 'undefined' && navigator.geolocation) {
+      setIsLocating(true);
+      navigator.geolocation.getCurrentPosition(
+        async (pos) => {
+          setIsLocating(false);
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          setCoords({ lat, lng });
+
+          try {
+            const res = await fetch(
+              `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
+              { headers: { 'User-Agent': 'FuelGo-Delivery/1.0' } }
+            );
+            if (res.ok) {
+              const data = await res.json();
+              if (data && data.display_name) {
+                const parts = data.display_name.split(',');
+                setAddressLine(parts.slice(0, 3).join(',').trim());
+                if (data.display_name.includes('Bengaluru') || data.display_name.includes('Bangalore')) {
+                  setCity('Bengaluru');
+                }
+                return;
+              }
+            }
+          } catch {
+            // fallback
+          }
+
+          setAddressLine(`Spot ${lat.toFixed(5)}°N, ${lng.toFixed(5)}°E`);
+        },
+        () => {
+          setIsLocating(false);
+          // Fallback gracefully to default coordinates
+        },
+        { enableHighAccuracy: true, timeout: 8000 }
+      );
+    }
+  }, [isOpen]);
+
   const todayStr = new Date().toISOString().split('T')[0];
 
   if (!isOpen) return null;
@@ -82,7 +138,6 @@ export const OrderModal: React.FC<OrderModalProps> = ({
     const parsed = parseFloat(valStr);
     if (!isNaN(parsed)) {
       setQuantity(parsed);
-      // Real-time validation message
       if (fuelType === 'Petrol' && parsed > 5) {
         setErrorMessage('Petrol orders are limited to a maximum of 5 litres per order.');
       } else if (fuelType === 'Diesel' && parsed > 10) {
@@ -95,7 +150,6 @@ export const OrderModal: React.FC<OrderModalProps> = ({
     }
   };
 
-  // Switch Fuel Type
   const handleFuelTypeChange = (type: FuelType) => {
     setFuelType(type);
     const defaultQty = type === 'Petrol' ? 3 : 5;
@@ -104,7 +158,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
     setErrorMessage(null);
   };
 
-  // Current Geolocation trigger
+  // Manual Geolocation trigger
   const handleUseCurrentLocation = () => {
     if (!navigator.geolocation) {
       setErrorMessage('Geolocation is not supported by your browser.');
@@ -112,15 +166,35 @@ export const OrderModal: React.FC<OrderModalProps> = ({
     }
     setIsLocating(true);
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
+      async (pos) => {
         setIsLocating(false);
-        setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setAddressLine(`GPS Pinned Location (${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)})`);
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        setCoords({ lat, lng });
+
+        try {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
+            { headers: { 'User-Agent': 'FuelGo-Delivery/1.0' } }
+          );
+          if (res.ok) {
+            const data = await res.json();
+            if (data && data.display_name) {
+              setAddressLine(data.display_name.split(',').slice(0, 3).join(',').trim());
+              setErrorMessage(null);
+              return;
+            }
+          }
+        } catch {
+          // fallback
+        }
+
+        setAddressLine(`Live GPS (${lat.toFixed(5)}°N, ${lng.toFixed(5)}°E)`);
         setErrorMessage(null);
       },
       () => {
         setIsLocating(false);
-        setErrorMessage('Could not acquire GPS location. Using default city address.');
+        setErrorMessage('Could not acquire GPS position. Please check location permissions.');
       },
       { enableHighAccuracy: true, timeout: 8000 }
     );
@@ -131,7 +205,6 @@ export const OrderModal: React.FC<OrderModalProps> = ({
     e.preventDefault();
     setErrorMessage(null);
 
-    // Validate server-side quantity rule
     const qtyCheck = store.validateOrderQuantity(fuelType, quantity);
     if (!qtyCheck.valid) {
       setErrorMessage(qtyCheck.error || 'Invalid fuel quantity.');
@@ -177,17 +250,17 @@ export const OrderModal: React.FC<OrderModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-neutral-200 overflow-hidden flex flex-col my-8 max-h-[92vh]">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+      <div className="relative w-full max-w-2xl bg-[#0d0f17] text-neutral-100 rounded-3xl shadow-2xl border border-neutral-800 overflow-hidden flex flex-col my-8 max-h-[92vh]">
         {/* Header */}
-        <div className="px-6 py-4 bg-gradient-to-r from-neutral-900 to-neutral-800 text-white flex items-center justify-between">
+        <div className="px-6 py-4 bg-[#0a0c13] border-b border-neutral-800 text-white flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
               <Fuel className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-lg font-bold text-white">Order Emergency Fuel</h3>
-              <p className="text-xs text-neutral-400">Doorstep Delivery • PESO Certified • MapTiler GPS Tracked</p>
+              <h3 className="text-base font-bold text-white">Order Emergency Fuel</h3>
+              <p className="text-xs text-neutral-400">Doorstep Delivery • PESO Certified • Live GPS Pinpoint</p>
             </div>
           </div>
           <button
@@ -198,19 +271,19 @@ export const OrderModal: React.FC<OrderModalProps> = ({
           </button>
         </div>
 
-        {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-6 overflow-y-auto space-y-6 flex-1">
+        {/* Form Body with dark theme field styling */}
+        <form onSubmit={handleSubmit} className="p-6 overflow-y-auto space-y-6 flex-1 text-xs">
           {/* Error Banner */}
           {errorMessage && (
-            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2.5 font-medium animate-shake">
-              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            <div className="p-3.5 rounded-xl bg-rose-950/60 border border-rose-800 text-rose-300 flex items-center gap-2.5 font-medium animate-shake">
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
               <span>{errorMessage}</span>
             </div>
           )}
 
           {/* STEP 1: Select Fuel Type */}
           <div>
-            <label className="block text-xs font-bold text-neutral-800 uppercase tracking-wider mb-2">
+            <label className="block text-xs font-bold text-neutral-300 uppercase tracking-wider mb-2">
               1. Select Fuel Type
             </label>
             <div className="grid grid-cols-2 gap-3">
@@ -218,18 +291,18 @@ export const OrderModal: React.FC<OrderModalProps> = ({
               <button
                 type="button"
                 onClick={() => handleFuelTypeChange('Petrol')}
-                className={`p-4 rounded-xl border text-left transition-all relative ${
+                className={`p-4 rounded-2xl border text-left transition-all relative ${
                   fuelType === 'Petrol'
-                    ? 'border-emerald-600 bg-emerald-50/70 ring-2 ring-emerald-500/20 text-emerald-950'
-                    : 'border-neutral-200 hover:border-neutral-300 bg-white text-neutral-700'
+                    ? 'border-emerald-500 bg-emerald-950/40 text-emerald-200 ring-2 ring-emerald-500/30'
+                    : 'border-neutral-800 hover:border-neutral-700 bg-neutral-900/60 text-neutral-400'
                 }`}
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-black text-base">Petrol (BS-VI)</span>
-                  <span className="text-xs font-bold font-mono text-emerald-700">₹104.25 / L</span>
+                  <span className="font-black text-sm text-white">Petrol (BS-VI)</span>
+                  <span className="text-xs font-bold font-mono text-emerald-400">₹104.25 / L</span>
                 </div>
-                <p className="text-xs text-neutral-500 mt-1">High-octane spark ignition fuel</p>
-                <div className="mt-2.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-600/10 text-emerald-700 text-[11px] font-bold">
+                <p className="text-[11px] text-neutral-400 mt-1">High-octane spark ignition fuel</p>
+                <div className="mt-2.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
                   <span>Limit: 1–5 Litres max</span>
                 </div>
               </button>
@@ -238,32 +311,32 @@ export const OrderModal: React.FC<OrderModalProps> = ({
               <button
                 type="button"
                 onClick={() => handleFuelTypeChange('Diesel')}
-                className={`p-4 rounded-xl border text-left transition-all relative ${
+                className={`p-4 rounded-2xl border text-left transition-all relative ${
                   fuelType === 'Diesel'
-                    ? 'border-amber-600 bg-amber-50/70 ring-2 ring-amber-500/20 text-amber-950'
-                    : 'border-neutral-200 hover:border-neutral-300 bg-white text-neutral-700'
+                    ? 'border-amber-500 bg-amber-950/40 text-amber-200 ring-2 ring-amber-500/30'
+                    : 'border-neutral-800 hover:border-neutral-700 bg-neutral-900/60 text-neutral-400'
                 }`}
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-black text-base">Diesel (BS-VI)</span>
-                  <span className="text-xs font-bold font-mono text-amber-700">₹91.80 / L</span>
+                  <span className="font-black text-sm text-white">Diesel (BS-VI)</span>
+                  <span className="text-xs font-bold font-mono text-amber-400">₹91.80 / L</span>
                 </div>
-                <p className="text-xs text-neutral-500 mt-1">Ultra-low sulfur commercial fuel</p>
-                <div className="mt-2.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-600/10 text-amber-700 text-[11px] font-bold">
+                <p className="text-[11px] text-neutral-400 mt-1">Ultra-low sulfur commercial fuel</p>
+                <div className="mt-2.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 text-[10px] font-bold">
                   <span>Limit: 1–10 Litres max</span>
                 </div>
               </button>
             </div>
           </div>
 
-          {/* STEP 2: Select Quantity with Presets & Custom Input */}
+          {/* STEP 2: Select Quantity */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className="text-xs font-bold text-neutral-800 uppercase tracking-wider">
+              <label className="text-xs font-bold text-neutral-300 uppercase tracking-wider">
                 2. Select Quantity ({fuelType})
               </label>
-              <span className="text-xs text-neutral-500 font-medium">
-                Allowed: {fuelType === 'Petrol' ? '1 L to 5 L' : '1 L to 10 L'}
+              <span className="text-[11px] text-neutral-400 font-mono">
+                Statutory Limit: {fuelType === 'Petrol' ? '1 L to 5 L' : '1 L to 10 L'}
               </span>
             </div>
 
@@ -277,9 +350,9 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                   className={`py-2.5 px-2 rounded-xl text-center font-bold text-xs transition-all border ${
                     quantity === preset && !customQuantity
                       ? fuelType === 'Petrol'
-                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
-                        : 'bg-amber-600 text-white border-amber-600 shadow-sm'
-                      : 'bg-neutral-50 hover:bg-neutral-100 text-neutral-800 border-neutral-200'
+                        ? 'bg-emerald-600 text-white border-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.5)]'
+                        : 'bg-amber-600 text-white border-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.5)]'
+                      : 'bg-neutral-900 hover:bg-neutral-800 text-neutral-300 border-neutral-800'
                   }`}
                 >
                   {preset} L
@@ -287,9 +360,9 @@ export const OrderModal: React.FC<OrderModalProps> = ({
               ))}
             </div>
 
-            {/* Custom Quantity Field */}
+            {/* Custom Quantity */}
             <div className="mt-3 flex items-center gap-2">
-              <span className="text-xs font-semibold text-neutral-600 whitespace-nowrap">Or custom quantity:</span>
+              <span className="text-xs font-semibold text-neutral-400 whitespace-nowrap">Or custom quantity:</span>
               <div className="relative flex-1">
                 <input
                   type="number"
@@ -299,16 +372,16 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                   value={customQuantity}
                   onChange={(e) => handleCustomQuantityChange(e.target.value)}
                   placeholder={`Enter ${fuelType === 'Petrol' ? '1 to 5' : '1 to 10'} Litres`}
-                  className="w-full px-3 py-1.5 text-xs font-bold border border-neutral-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  className="w-full px-3 py-2 text-xs font-bold bg-neutral-900 border border-neutral-700 rounded-xl text-white placeholder-neutral-500 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none"
                 />
-                <span className="absolute right-3 top-1.5 text-xs text-neutral-400 font-semibold">Litres</span>
+                <span className="absolute right-3 top-2 text-xs text-neutral-500 font-semibold">Litres</span>
               </div>
             </div>
           </div>
 
-          {/* STEP 3: Delivery Scheduling */}
+          {/* STEP 3: Delivery Timing */}
           <div>
-            <label className="block text-xs font-bold text-neutral-800 uppercase tracking-wider mb-2">
+            <label className="block text-xs font-bold text-neutral-300 uppercase tracking-wider mb-2">
               3. Delivery Timing
             </label>
             <div className="grid grid-cols-2 gap-3">
@@ -317,8 +390,8 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                 onClick={() => setIsScheduled(false)}
                 className={`py-2.5 px-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 ${
                   !isScheduled
-                    ? 'bg-neutral-900 text-white border-neutral-900 shadow-sm'
-                    : 'bg-neutral-50 text-neutral-700 border-neutral-200 hover:bg-neutral-100'
+                    ? 'bg-emerald-950/70 text-emerald-300 border-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.3)]'
+                    : 'bg-neutral-900 text-neutral-400 border-neutral-800 hover:bg-neutral-800'
                 }`}
               >
                 <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
@@ -333,8 +406,8 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                 }}
                 className={`py-2.5 px-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 ${
                   isScheduled
-                    ? 'bg-neutral-900 text-white border-neutral-900 shadow-sm'
-                    : 'bg-neutral-50 text-neutral-700 border-neutral-200 hover:bg-neutral-100'
+                    ? 'bg-amber-950/70 text-amber-300 border-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.3)]'
+                    : 'bg-neutral-900 text-neutral-400 border-neutral-800 hover:bg-neutral-800'
                 }`}
               >
                 <Calendar className="w-3.5 h-3.5 text-amber-400" />
@@ -342,26 +415,25 @@ export const OrderModal: React.FC<OrderModalProps> = ({
               </button>
             </div>
 
-            {/* Scheduled Date/Time Inputs */}
             {isScheduled && (
-              <div className="mt-3 p-3 bg-neutral-50 rounded-xl border border-neutral-200 grid grid-cols-2 gap-3 text-xs">
+              <div className="mt-3 p-3 bg-neutral-900 rounded-xl border border-neutral-800 grid grid-cols-2 gap-3 text-xs">
                 <div>
-                  <label className="block text-neutral-700 font-medium mb-1">Delivery Date</label>
+                  <label className="block text-neutral-400 mb-1">Delivery Date</label>
                   <input
                     type="date"
                     min={todayStr}
                     value={scheduledDate}
                     onChange={(e) => setScheduledDate(e.target.value)}
                     required={isScheduled}
-                    className="w-full px-3 py-1.5 border border-neutral-300 rounded-lg text-xs"
+                    className="w-full px-3 py-2 bg-neutral-950 border border-neutral-700 rounded-lg text-white text-xs focus:ring-1 focus:ring-emerald-500"
                   />
                 </div>
                 <div>
-                  <label className="block text-neutral-700 font-medium mb-1">Delivery Time Slot</label>
+                  <label className="block text-neutral-400 mb-1">Time Slot</label>
                   <select
                     value={scheduledTime}
                     onChange={(e) => setScheduledTime(e.target.value)}
-                    className="w-full px-3 py-1.5 border border-neutral-300 rounded-lg text-xs bg-white"
+                    className="w-full px-3 py-2 bg-neutral-950 border border-neutral-700 rounded-lg text-white text-xs focus:ring-1 focus:ring-emerald-500"
                   >
                     <option value="09:00 AM">09:00 AM - 10:00 AM</option>
                     <option value="11:30 AM">11:30 AM - 12:30 PM</option>
@@ -374,20 +446,26 @@ export const OrderModal: React.FC<OrderModalProps> = ({
             )}
           </div>
 
-          {/* STEP 4: Delivery Location & Precision Map Tailor Pinpoint */}
+          {/* STEP 4: Delivery Location & Live Map Pinpoint */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-bold text-neutral-800 uppercase tracking-wider flex items-center gap-1.5">
-                <MapPin className="w-3.5 h-3.5 text-emerald-600" />
+              <label className="text-xs font-bold text-neutral-300 uppercase tracking-wider flex items-center gap-1.5">
+                <MapPin className="w-3.5 h-3.5 text-emerald-400" />
                 <span>4. Precision Delivery Pinpoint (Map Tailor)</span>
               </label>
-              <span className="text-[11px] text-neutral-500 font-medium">
-                Tap map, drag pin, or use 10m micro-nudges
-              </span>
+              <button
+                type="button"
+                onClick={handleUseCurrentLocation}
+                disabled={isLocating}
+                className="inline-flex items-center gap-1.5 text-[11px] font-mono font-bold text-emerald-400 hover:text-emerald-300 bg-neutral-900 px-3 py-1 rounded-lg border border-neutral-800 transition-colors"
+              >
+                <Crosshair className={`w-3.5 h-3.5 ${isLocating ? 'animate-spin' : ''}`} />
+                <span>{isLocating ? 'Locking GPS...' : 'Acquire My GPS'}</span>
+              </button>
             </div>
 
-            {/* Embedded Map Tailor Precision Pinpoint Map */}
-            <div className="h-64 sm:h-72 rounded-2xl overflow-hidden border border-neutral-300 shadow-sm relative">
+            {/* Embedded Live Map Tailor */}
+            <div className="h-64 sm:h-72 rounded-2xl overflow-hidden border border-neutral-800 shadow-xl relative">
               <MapTilerMap
                 customerLocation={{
                   lat: coords.lat,
@@ -398,11 +476,11 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                 enablePinpoint={true}
                 showMicroNudge={true}
                 showUberDeepLink={false}
+                autoDetectLocation={true}
                 onLocationSelect={(lat, lng, addr) => {
                   setCoords({ lat, lng });
                   if (addr) {
                     setAddressLine(addr);
-                    // Extract city or pincode if available
                     if (addr.includes('Bengaluru') || addr.includes('Bangalore')) {
                       setCity('Bengaluru');
                     }
@@ -411,12 +489,12 @@ export const OrderModal: React.FC<OrderModalProps> = ({
               />
             </div>
 
-            {/* Address Input Fields with GPS Sync */}
+            {/* Address Input Fields with Dark Theme Colors */}
             <div className="space-y-2 text-xs pt-1">
-              <div className="flex items-center justify-between text-[11px] text-neutral-500">
-                <span>Synchronized Delivery Address:</span>
-                <span className="font-mono text-emerald-700 font-semibold">
-                  Lat: {coords.lat.toFixed(5)}, Lng: {coords.lng.toFixed(5)}
+              <div className="flex items-center justify-between text-[11px] text-neutral-400 font-mono">
+                <span>Synchronized Delivery Coordinates:</span>
+                <span className="text-emerald-400 font-bold">
+                  {coords.lat.toFixed(5)}°N, {coords.lng.toFixed(5)}°E
                 </span>
               </div>
               <input
@@ -425,7 +503,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                 value={addressLine}
                 onChange={(e) => setAddressLine(e.target.value)}
                 placeholder="Street address / Vehicle parking bay spot"
-                className="w-full px-3 py-2 border border-neutral-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                className="w-full px-3 py-2 bg-neutral-900 border border-neutral-700 rounded-xl text-white placeholder-neutral-500 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
               />
               <div className="grid grid-cols-3 gap-2">
                 <input
@@ -433,7 +511,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                   value={landmark}
                   onChange={(e) => setLandmark(e.target.value)}
                   placeholder="Landmark (Optional)"
-                  className="px-3 py-1.5 border border-neutral-300 rounded-lg"
+                  className="px-3 py-2 bg-neutral-900 border border-neutral-700 rounded-xl text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 />
                 <input
                   type="text"
@@ -441,7 +519,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                   value={city}
                   onChange={(e) => setCity(e.target.value)}
                   placeholder="City"
-                  className="px-3 py-1.5 border border-neutral-300 rounded-lg"
+                  className="px-3 py-2 bg-neutral-900 border border-neutral-700 rounded-xl text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 />
                 <input
                   type="text"
@@ -449,7 +527,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                   value={pincode}
                   onChange={(e) => setPincode(e.target.value)}
                   placeholder="Pincode"
-                  className="px-3 py-1.5 border border-neutral-300 rounded-lg font-mono"
+                  className="px-3 py-2 bg-neutral-900 border border-neutral-700 rounded-xl text-white font-mono placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 />
               </div>
             </div>
@@ -457,7 +535,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
 
           {/* STEP 5: Payment Method */}
           <div>
-            <label className="block text-xs font-bold text-neutral-800 uppercase tracking-wider mb-2">
+            <label className="block text-xs font-bold text-neutral-300 uppercase tracking-wider mb-2">
               5. Payment Method (INR ₹)
             </label>
             <div className="grid grid-cols-3 gap-2 text-xs font-semibold">
@@ -468,49 +546,45 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                   onClick={() => setPaymentMethod(m)}
                   className={`p-2.5 rounded-xl border text-center transition-all ${
                     paymentMethod === m
-                      ? 'border-emerald-600 bg-emerald-50 text-emerald-950 font-bold ring-2 ring-emerald-500/20'
-                      : 'border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700'
+                      ? 'border-emerald-500 bg-emerald-950/70 text-emerald-300 font-bold ring-2 ring-emerald-500/20'
+                      : 'border-neutral-800 bg-neutral-900 hover:bg-neutral-800/80 text-neutral-300'
                   }`}
                 >
                   {m}
                 </button>
               ))}
             </div>
-            {/* Simulation label requirement */}
-            <div className="mt-2 flex items-center gap-1.5 text-[11px] text-neutral-500 bg-neutral-100 p-2 rounded-lg">
-              <Info className="w-3.5 h-3.5 text-neutral-500 shrink-0" />
+            <div className="mt-2 flex items-center gap-1.5 text-[11px] text-neutral-400 bg-neutral-900 p-2 rounded-xl border border-neutral-800">
+              <Info className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
               <span>
-                <strong>Simulation Mode:</strong> Online payments are safely processed in test mode. No actual money will be charged.
+                <strong>Simulation Mode:</strong> Online payments are safely verified in test mode. No actual money will be charged.
               </span>
             </div>
           </div>
 
-          {/* STEP 6: Price Breakdown (Mandatory Itemized Breakdown with Separate Rider Charge) */}
-          <div className="p-4 rounded-xl bg-neutral-50 border border-neutral-200 text-xs space-y-2">
-            <h4 className="font-bold text-neutral-900 uppercase tracking-wider text-[11px]">
+          {/* STEP 6: Price Breakdown */}
+          <div className="p-4 rounded-2xl bg-neutral-900 border border-neutral-800 text-xs space-y-2">
+            <h4 className="font-bold text-neutral-300 uppercase tracking-wider text-[11px]">
               Order Price Breakdown (INR)
             </h4>
-            <div className="flex justify-between text-neutral-700">
+            <div className="flex justify-between text-neutral-400">
               <span>
                 Fuel Cost ({breakdown.quantity} L × ₹{breakdown.pricePerLitre.toFixed(2)}):
               </span>
-              <span className="font-mono font-semibold">₹{breakdown.fuelSubtotal.toFixed(2)}</span>
+              <span className="font-mono font-semibold text-neutral-200">₹{breakdown.fuelSubtotal.toFixed(2)}</span>
             </div>
-            <div className="flex justify-between text-neutral-700">
-              <span className="flex items-center gap-1">
-                <span>Rider / Delivery Charge:</span>
-                <span className="text-[10px] text-neutral-500">(Itemized separately)</span>
-              </span>
-              <span className="font-mono font-semibold">₹{breakdown.riderCharge.toFixed(2)}</span>
+            <div className="flex justify-between text-neutral-400">
+              <span>Rider / Delivery Logistics Fee (Itemized separately):</span>
+              <span className="font-mono font-semibold text-neutral-200">₹{breakdown.riderCharge.toFixed(2)}</span>
             </div>
-            <div className="flex justify-between text-neutral-700">
+            <div className="flex justify-between text-neutral-400">
               <span>Applicable Tax (5% GST):</span>
-              <span className="font-mono font-semibold">₹{breakdown.taxAmount.toFixed(2)}</span>
+              <span className="font-mono font-semibold text-neutral-200">₹{breakdown.taxAmount.toFixed(2)}</span>
             </div>
-            <div className="h-px bg-neutral-300" />
-            <div className="flex justify-between text-neutral-900 font-bold text-sm">
-              <span>Total Payable Amount:</span>
-              <span className="font-mono text-emerald-700">₹{breakdown.finalTotal.toFixed(2)}</span>
+            <div className="h-px bg-neutral-800" />
+            <div className="flex justify-between font-bold text-sm">
+              <span className="text-white">Total Payable Amount:</span>
+              <span className="font-mono text-emerald-400 text-base">₹{breakdown.finalTotal.toFixed(2)}</span>
             </div>
           </div>
 
@@ -518,9 +592,9 @@ export const OrderModal: React.FC<OrderModalProps> = ({
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-700 hover:to-teal-800 text-white font-bold text-sm shadow-lg shadow-emerald-500/25 transition-all flex items-center justify-center gap-2"
+            className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:from-emerald-500 hover:to-teal-400 text-neutral-950 font-black text-sm shadow-[0_0_20px_rgba(16,185,129,0.3)] transition-all flex items-center justify-center gap-2 cursor-pointer"
           >
-            <ShieldCheck className="w-5 h-5 text-emerald-200" />
+            <ShieldCheck className="w-5 h-5 text-neutral-950" />
             <span>
               {isSubmitting
                 ? 'Processing Fuel Order...'
